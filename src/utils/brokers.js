@@ -1283,6 +1283,118 @@ export async function useRithmic(param) {
 }
 
 /****************************
+ * SIERRA CHART
+ ****************************/
+export async function useSierraChart(param) {
+    return new Promise(async (resolve, reject) => {
+        try {
+            // Sierra exports are tab separated, therefore we enforce the delimiter and drop empty rows.
+            const papaParse = Papa.parse(param, { header: true, delimiter: '\t', skipEmptyLines: 'greedy' })
+
+            // Helper ensures we can match Sierra symbols (e.g. MESM5.CME) against futureContractsJson.
+            const normalizeFuturesSymbol = (rawSymbol) => {
+                if (!rawSymbol) {
+                    return ""
+                }
+                const [symbolWithoutExchange] = rawSymbol.split('.')
+                const alphanumeric = symbolWithoutExchange.toUpperCase().replace(/[^A-Z0-9]/g, '')
+                // Month codes always end with a month letter + 1-2 digit year (e.g. M5, U24), strip them for the lookup key.
+                const monthPattern = /([FGHJKMNQUVXZ])(\d{1,2})$/i
+                return alphanumeric.replace(monthPattern, '')
+            }
+
+            for (const row of papaParse.data) {
+                // Skip partial headers/footers that Papa might keep.
+                if (!row || row.ActivityType !== "Fills" || !row.Symbol || !row.TradeAccount) {
+                    continue
+                }
+
+                const dateSource = (row.TransDateTime || row.DateTime || "").replace(/\s+/g, ' ').trim()
+                if (!dateSource) {
+                    continue
+                }
+
+                // Sierra timestamps include microseconds, so we try the extended format first and then fall back.
+                let executionDate = dayjs(dateSource, "YYYY-MM-DD HH:mm:ss.SSSSSS", true)
+                if (!executionDate.isValid()) {
+                    executionDate = dayjs(dateSource, "YYYY-MM-DD HH:mm:ss", true)
+                }
+                if (!executionDate.isValid()) {
+                    reject("Unable to parse Sierra Chart timestamp " + dateSource)
+                    return
+                }
+
+                const quantity = Number(row.FilledQuantity || row.Quantity || 0)
+                if (!quantity) {
+                    continue
+                }
+
+                const fillPrice = Number(row.FillPrice || row.Price || 0)
+                if (!fillPrice) {
+                    continue
+                }
+
+                const normalizedSymbol = normalizeFuturesSymbol(row.Symbol)
+                const contractSpecs = futureContractsJson.value.filter(item => item.symbol === normalizedSymbol)
+                if (contractSpecs.length === 0) {
+                    reject("Missing information for future symbol " + normalizedSymbol + " (from " + row.Symbol + ")")
+                    return
+                }
+                const tickSize = contractSpecs[0].tick
+                const tickValue = contractSpecs[0].value
+
+                let temp = {}
+                temp.Account = row.TradeAccount
+                temp["T/D"] = executionDate.format("MM/DD/YYYY")
+                temp["S/D"] = temp["T/D"]
+                temp.Currency = "USD"
+                temp.Type = "future"
+                temp.Qty = quantity.toString()
+
+                const side = (row.BuySell || "").toLowerCase()
+                const openClose = (row.OpenClose || "Open").toLowerCase()
+                if (side === "buy" && openClose === "open") {
+                    temp.Side = "B"
+                } else if (side === "buy") {
+                    temp.Side = "BC"
+                } else if (side === "sell" && openClose === "open") {
+                    temp.Side = "SS"
+                } else {
+                    temp.Side = "S"
+                }
+
+                temp.SymbolOriginal = row.Symbol
+                temp.Symbol = normalizedSymbol
+                temp.Price = fillPrice.toString()
+                temp["Exec Time"] = executionDate.format("HH:mm:ss")
+
+                let qtyForProceeds = (temp.Side === "B" || temp.Side === "BC") ? -quantity : quantity
+                let grossProceeds = (qtyForProceeds * fillPrice) / tickSize * tickValue
+                temp["Gross Proceeds"] = grossProceeds.toString()
+
+                temp.Comm = "0"
+                temp.SEC = "0"
+                temp.TAF = "0"
+                temp.NSCC = "0"
+                temp.Nasdaq = "0"
+                temp["ECN Remove"] = "0"
+                temp["ECN Add"] = "0"
+                temp["Net Proceeds"] = (grossProceeds - Number(temp.Comm)).toString()
+                temp["Clr Broker"] = ""
+                temp.Liq = ""
+                temp.Note = row.Note || ""
+
+                tradesData.push(temp)
+            }
+        } catch (error) {
+            console.log("  --> ERROR " + error)
+            reject(error)
+        }
+        resolve()
+    })
+}
+
+/****************************
  * FUNDTRADERS (no swing trading)
  ****************************/
 // Needs grouping by Symbol

@@ -3263,6 +3263,12 @@ export const brokers = reactive([{
     autoSync: false
 },
 {
+    value: "sierraChart",
+    label: "Sierra Chart",
+    assetTypes: ["futures"],
+    autoSync: false
+},
+{
     value: "fundTraders",
     label: "FundTraders",
     assetTypes: ["stocks"],

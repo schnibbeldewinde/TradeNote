@@ -83,6 +83,16 @@ const router = createRouter({
             import('../views/Daily.vue')
     },
     {
+        path: '/analysis',
+        name: 'analysis',
+        meta: {
+            title: "Analysis",
+            layout: DashboardLayout
+        },
+        component: () =>
+            import('../views/Analysis.vue')
+    },
+    {
         path: '/diary',
         name: 'diary',
         meta: {

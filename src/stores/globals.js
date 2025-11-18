@@ -83,6 +83,19 @@ export const groups = reactive({})
 export const profitAnalysis = reactive({})
 export const timeFrame = ref(15)
 export const imports = ref([])
+export const journalTrades = ref([])
+export const journalTradesLoading = ref(false)
+export const journalTradesMetrics = reactive({
+    netCumulativePL: 0,
+    profitFactor: 0,
+    winRate: 0,
+    avgWin: 0,
+    avgLoss: 0,
+    avgWinLossRatio: 0,
+    totalTrades: 0,
+    wins: 0,
+    losses: 0
+})
 
 /**************************************
 * ADD TRADES

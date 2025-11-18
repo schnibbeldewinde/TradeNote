@@ -1296,49 +1296,66 @@ export async function useRefreshTrades() {
 * IMPORTS
 ***************************************/
 
-export const useDeleteTrade = async () => {
+export const useDeleteTrade = async (datesToDelete) => {
     return new Promise(async (resolve, reject) => {
-        //console.log("screenshot "+JSON.stringify(screenshots))
-
-        /* Now, let's delete screenshot */
+        const targets = Array.isArray(datesToDelete) ? datesToDelete : (selectedItem.value ? [selectedItem.value] : []);
+        if (targets.length === 0) {
+            reject("No trade selected for deletion");
+            return;
+        }
 
         const parseObject = Parse.Object.extend("trades");
-        const query = new Parse.Query(parseObject);
-        query.equalTo("dateUnix", selectedItem.value);
-        const results = await query.first();
 
-        if (results) {
-            await results.destroy()
-            console.log('  --> Deleted trade with id ' + results.id)
-            useGetTrades("imports")
-            resolve()
-        } else {
-            alert("There was problem with deleting trade")
-            reject("There was problem with deleting trade")
+        try {
+            await Promise.all(targets.map(async (dateUnix) => {
+                const query = new Parse.Query(parseObject);
+                query.equalTo("dateUnix", dateUnix);
+                const results = await query.first();
+                if (!results) {
+                    throw new Error(`Trade with date ${dateUnix} not found`);
+                }
+                await results.destroy();
+                console.log('  --> Deleted trade with id ' + results.id);
+            }));
+
+            await useGetTrades("imports");
+            selectedItem.value = null;
+            resolve();
+        } catch (error) {
+            alert("There was problem with deleting trade");
+            reject(error);
         }
     })
 }
 
-export const useDeleteExcursions = async () => {
+export const useDeleteExcursions = async (datesToDelete) => {
     return new Promise(async (resolve, reject) => {
+        const targets = Array.isArray(datesToDelete) ? datesToDelete : (selectedItem.value ? [selectedItem.value] : []);
+        if (targets.length === 0) {
+            resolve();
+            return;
+        }
 
         const parseObject = Parse.Object.extend("excursions");
-        const query = new Parse.Query(parseObject);
-        query.equalTo("dateUnix", selectedItem.value);
-        const results = await query.find();
 
-        if (results.length > 0) {
-            try {
-                // Destroy each object in the results array
-                await Promise.all(results.map(result => result.destroy()));
-                console.log('  --> Deleted excursions with ids ' + results.map(result => result.id).join(', '));
-                resolve();
-            } catch (error) {
-                alert("There was a problem with deleting excursions");
-                reject(error);
-            }
-        } else {
-            console.log("No excursions found to delete");
+        try {
+            await Promise.all(targets.map(async (dateUnix) => {
+                const query = new Parse.Query(parseObject);
+                query.equalTo("dateUnix", dateUnix);
+                const results = await query.find();
+
+                if (results.length > 0) {
+                    await Promise.all(results.map(result => result.destroy()));
+                    console.log('  --> Deleted excursions with ids ' + results.map(result => result.id).join(', '));
+                } else {
+                    console.log("No excursions found to delete for " + dateUnix);
+                }
+            }));
+            selectedItem.value = null;
+            resolve();
+        } catch (error) {
+            alert("There was a problem with deleting excursions");
+            reject(error);
         }
     })
 }

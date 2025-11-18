@@ -1291,6 +1291,58 @@ export async function useSierraChart(param) {
             // Sierra exports are tab separated, therefore we enforce the delimiter and drop empty rows.
             const papaParse = Papa.parse(param, { header: true, delimiter: '\t', skipEmptyLines: 'greedy' })
 
+            const parseSierraNumber = (value) => {
+                if (value === null || value === undefined || value === "") {
+                    return NaN
+                }
+                if (typeof value === "number") {
+                    return value
+                }
+                let normalized = String(value).trim()
+                if (!normalized) {
+                    return NaN
+                }
+                // Replace decimal comma with dot when there is no dot already, otherwise remove thousand separators.
+                if (normalized.includes(',') && !normalized.includes('.')) {
+                    normalized = normalized.replace(/,/g, '.')
+                } else {
+                    normalized = normalized.replace(/,/g, '')
+                }
+                normalized = normalized.replace(/[^0-9+-.]/g, '')
+                const parsed = Number(normalized)
+                return Number.isNaN(parsed) ? NaN : parsed
+            }
+
+            const pickNumericField = (row, names) => {
+                for (const name of names) {
+                    if (row[name] !== undefined && row[name] !== null && row[name] !== "") {
+                        const value = parseSierraNumber(row[name])
+                        if (!Number.isNaN(value)) {
+                            return value
+                        }
+                    }
+                }
+                return null
+            }
+
+            const normalizeScaledPrice = (price, row) => {
+                if (price === null || price === undefined || Number.isNaN(price)) {
+                    return null
+                }
+                let normalized = price
+                // Detect Sierra exports that express prices in cents (e.g. 605725 == 6057.25).
+                const rawStringSource = ["FillPrice", "Price", "TradePrice", "Price1", "Price2"]
+                    .map(key => row[key])
+                    .find(value => value !== undefined && value !== null && value !== "")
+                const digitsBeforeDecimal = rawStringSource
+                    ? rawStringSource.toString().split('.')[0].replace(/[^0-9]/g, '').length
+                    : null
+                if (Math.abs(normalized) >= 100000 || (digitsBeforeDecimal !== null && digitsBeforeDecimal >= 6)) {
+                    normalized = normalized / 100
+                }
+                return normalized
+            }
+
             // Helper ensures we can match Sierra symbols (e.g. MESM5.CME) against futureContractsJson.
             const normalizeFuturesSymbol = (rawSymbol) => {
                 if (!rawSymbol) {
@@ -1324,15 +1376,35 @@ export async function useSierraChart(param) {
                     return
                 }
 
-                const quantity = Number(row.FilledQuantity || row.Quantity || 0)
+                const quantity = pickNumericField(row, ["FilledQuantity", "Quantity", "FillQuantity", "Qty", "OrderQuantity"]) || 0
                 if (!quantity) {
                     continue
                 }
 
-                const fillPrice = Number(row.FillPrice || row.Price || 0)
+                let fillPrice = pickNumericField(row, ["FillPrice", "Price", "TradePrice", "ExecutionPrice", "AvgFillPrice"])
+                const priceOverride = pickNumericField(row, ["Fill Price Value", "Price Value", "Trade Price Value", "PriceValue"])
+                if (priceOverride !== null) {
+                    fillPrice = priceOverride
+                } else {
+                    const priceDivisor = pickNumericField(row, [
+                        "PriceDenominator",
+                        "Price Denominator",
+                        "PriceMultiplier",
+                        "Price Multiplier",
+                        "PriceDivisor",
+                        "Price Divisor",
+                        "PriceValueMultiplier",
+                        "Price Value Multiplier"
+                    ])
+                    if (priceDivisor && priceDivisor !== 0 && priceDivisor !== 1) {
+                        fillPrice = fillPrice / priceDivisor
+                    }
+                }
+
                 if (!fillPrice) {
                     continue
                 }
+                fillPrice = normalizeScaledPrice(fillPrice, row)
 
                 const normalizedSymbol = normalizeFuturesSymbol(row.Symbol)
                 const contractSpecs = futureContractsJson.value.filter(item => item.symbol === normalizedSymbol)
@@ -1340,8 +1412,16 @@ export async function useSierraChart(param) {
                     reject("Missing information for future symbol " + normalizedSymbol + " (from " + row.Symbol + ")")
                     return
                 }
-                const tickSize = contractSpecs[0].tick
-                const tickValue = contractSpecs[0].value
+                let tickSize = contractSpecs[0].tick
+                let tickValue = contractSpecs[0].value
+                const tickSizeOverride = pickNumericField(row, ["TickSize", "Tick Size"])
+                const tickValueOverride = pickNumericField(row, ["CurrencyValuePerTick", "Currency Value Per Tick", "TickValue", "Tick Value"])
+                if (tickSizeOverride && tickSizeOverride > 0) {
+                    tickSize = tickSizeOverride
+                }
+                if (tickValueOverride && tickValueOverride > 0) {
+                    tickValue = tickValueOverride
+                }
 
                 let temp = {}
                 temp.Account = row.TradeAccount

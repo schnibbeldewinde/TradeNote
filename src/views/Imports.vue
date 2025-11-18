@@ -1,11 +1,11 @@
 <script setup>
-import { onBeforeMount, ref, onMounted, nextTick } from 'vue';
+import { onBeforeMount, ref, computed, watch } from 'vue';
 import SpinnerLoadingPage from '../components/SpinnerLoadingPage.vue';
 import { imports, selectedItem, itemToEditId, currentDate, diaryUpdate, timeZoneTrade, diaryIdToEdit, diaryButton, tradeTags, tagInput, selectedTagIndex, showTagsList, availableTags, tags, countdownSeconds, selectedBroker, brokers } from '../stores/globals';
 import { useInitQuill, useDateCalFormat, useInitPopover } from '../utils/utils';
 import { useUploadDiary } from '../utils/diary'
 import { useFilterSuggestions, useTradeTagsChange, useFilterTags, useToggleTagsDropdown, useGetTags, useGetAvailableTags, useGetTagInfo } from '../utils/daily';
-import { useGetTrades } from '../utils/trades';
+import { useGetTrades, useDeleteTrade, useDeleteExcursions } from '../utils/trades';
 
 /* MODULES */
 import Parse from 'parse/dist/parse.min.js'
@@ -28,6 +28,8 @@ dayjs.extend(customParseFormat)
 
 let syncActiveBrokers = ref([])
 let autoSyncInputs = ref({})
+const selectedImports = ref([])
+const deletingSelectedImports = ref(false)
 
 onBeforeMount(async () => {
     await useGetTrades()
@@ -63,6 +65,56 @@ function inputChooseBroker(param) {
     selectedBroker.value = param
 }
 
+const allImportsSelected = computed(() => {
+    return imports.value.length > 0 && selectedImports.value.length === imports.value.length
+})
+
+const someImportsSelected = computed(() => {
+    return selectedImports.value.length > 0 && selectedImports.value.length < imports.value.length
+})
+
+const hasSelectedImports = computed(() => selectedImports.value.length > 0)
+
+function toggleSelectAll(isChecked) {
+    if (isChecked) {
+        selectedImports.value = imports.value.map(item => item.dateUnix)
+    } else {
+        selectedImports.value = []
+    }
+}
+
+function toggleImportSelection(dateUnix) {
+    if (selectedImports.value.includes(dateUnix)) {
+        selectedImports.value = selectedImports.value.filter(date => date !== dateUnix)
+    } else {
+        selectedImports.value = [...selectedImports.value, dateUnix]
+    }
+}
+
+watch(imports, (newImports) => {
+    if (!Array.isArray(newImports)) {
+        selectedImports.value = []
+        return
+    }
+    const availableDates = newImports.map(item => item.dateUnix)
+    selectedImports.value = selectedImports.value.filter(date => availableDates.includes(date))
+})
+
+async function deleteSelectedImports() {
+    if (!hasSelectedImports.value || deletingSelectedImports.value) return
+    const confirmation = confirm(`Delete ${selectedImports.value.length} selected import${selectedImports.value.length > 1 ? 's' : ''}? This will also remove excursions.`)
+    if (!confirmation) return
+    deletingSelectedImports.value = true
+    try {
+        await useDeleteTrade(selectedImports.value)
+        await useDeleteExcursions(selectedImports.value)
+        selectedImports.value = []
+    } catch (error) {
+        console.error(error)
+    } finally {
+        deletingSelectedImports.value = false
+    }
+}
 
 </script>
 <template>
@@ -84,11 +136,36 @@ function inputChooseBroker(param) {
                         and
                         satisfactions are not deleted.</p>
                     <p>You can also manage your database using a MongoDB GUI or CLI.</p>
-                    <table class="table">
+                    <div class="d-flex justify-content-between align-items-center mb-3">
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" id="selectAllImports"
+                                :checked="allImportsSelected" :indeterminate.prop="someImportsSelected"
+                                @change="toggleSelectAll($event.target.checked)">
+                            <label class="form-check-label ms-2" for="selectAllImports">
+                                Select all imports
+                            </label>
+                        </div>
+                        <button class="btn btn-red btn-sm" :disabled="!hasSelectedImports || deletingSelectedImports"
+                            @click="deleteSelectedImports">
+                            Delete selected
+                            <span v-if="hasSelectedImports">({{ selectedImports.length }})</span>
+                        </button>
+                    </div>
+                    <table class="table align-middle">
                         <thead>
+                            <tr>
+                                <th style="width: 60px;"></th>
+                                <th>Date</th>
+                                <th class="text-end">Actions</th>
+                            </tr>
                         </thead>
                         <tbody>
                             <tr v-for="(data, index)  in imports">
+                                <td>
+                                    <input class="form-check-input" type="checkbox"
+                                        :checked="selectedImports.includes(data.dateUnix)"
+                                        @change="toggleImportSelection(data.dateUnix)">
+                                </td>
                                 <td>{{ useDateCalFormat(data.dateUnix) }}</td>
                                 <td class="text-end">
                                     <i :id="data.dateUnix" v-on:click="selectedItem = data.dateUnix"
